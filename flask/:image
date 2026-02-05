@@ -1,0 +1,4 @@
+for f in *.png; do
+  # -resize [가로] [세로] (0은 비율 유지)
+  cwebp -q 80 -resize 800 0 "$f" -o "${f%.png}.webp"
+done
