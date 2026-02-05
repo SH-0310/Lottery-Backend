@@ -40,6 +40,6 @@ fi
 
 echo "🚀 Flask 서버를 실행합니다..."
 
-cd Flask
+cd flask
 
 nohup python3 app.py > ../server.log 2>&1 &
