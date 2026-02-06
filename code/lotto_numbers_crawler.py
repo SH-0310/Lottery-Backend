@@ -21,11 +21,9 @@ def get_latest_round_in_db():
             return result['last_round'] if result['last_round'] else 0
     finally:
         conn.close()
-
-# --- [추가된 함수: 이월수 통계 업데이트] ---
+        
 def update_carryover_statistics(cursor, current_round):
     """방금 저장된 회차와 이전 회차를 비교하여 통계 테이블 갱신"""
-    # 1. 이번 회차와 이전 회차 번호 가져오기
     cursor.execute("""
         SELECT ltEpsd, tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo 
         FROM lotto_numbers 
@@ -35,38 +33,55 @@ def update_carryover_statistics(cursor, current_round):
     
     rows = cursor.fetchall()
     if len(rows) < 2:
-        return # 이전 회차 데이터가 없으면 계산 불가
+        return
 
     prev, curr = rows[0], rows[1]
     
-    # 2. 이월수 계산 (Set 집합 연산 사용)
-    prev_set_6 = {prev[f'tm{j}WnNo'] for j in range(1, 7)}
-    prev_set_7 = prev_set_6 | {prev['bnsWnNo']} # 보너스 포함
-    curr_set_6 = {curr[f'tm{j}WnNo'] for j in range(1, 7)}
+    # 1. 집합 생성
+    prev_main = {prev[f'tm{j}WnNo'] for j in range(1, 7)}
+    prev_bonus = prev['bnsWnNo']
+    prev_all = prev_main | {prev_bonus} # 지난주 메인 + 보너스 (총 7개)
+    
+    curr_main = {curr[f'tm{j}WnNo'] for j in range(1, 7)}
 
-    match_6 = len(prev_set_6 & curr_set_6)
-    match_7 = len(prev_set_7 & curr_set_6)
-    matched_nums = ",".join(map(str, sorted(list(prev_set_6 & curr_set_6))))
+    # 2. 이월수 계산 (핵심 수정!)
+    # match_6: 지난주 메인(6개) 중 이번 주 메인에 나온 개수
+    # match_7: 지난주 전체(7개) 중 이번 주 메인에 나온 개수
+    intersection_6 = prev_main & curr_main
+    intersection_7 = prev_all & curr_main
+    
+    match_6 = len(intersection_6)
+    match_7 = len(intersection_7)
+    
+    # [수정] 분석 API가 찾을 수 있도록 '보너스 포함 겹친 번호'를 저장합니다.
+    matched_nums_str = ",".join(map(str, sorted(list(intersection_7))))
 
     # 3. History 테이블 저장
     cursor.execute("""
         INSERT INTO lotto_carryover_history (round, match_count, match_count_with_bonus, matched_numbers)
         VALUES (%s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE match_count=%s, match_count_with_bonus=%s, matched_numbers=%s
-    """, (current_round, match_6, match_7, matched_nums, match_6, match_7, matched_nums))
+    """, (current_round, match_6, match_7, matched_nums_str, match_6, match_7, matched_nums_str))
 
-    # 4. Summary 테이블 누적 업데이트
-    # (주의: 만약 스크립트를 실수로 중복 실행할 경우를 대비해 
-    # 실제 앱 운영시에는 '이미 처리된 회차인지' 체크하는 로직이 있으면 더 안전합니다.)
+    # 4. Summary 테이블 누적 업데이트 (분리 업데이트)
+    # [수정] 보너스 제외 통계는 match_6 기준, 보너스 포함 통계는 match_7 기준으로 각각 업데이트
+    
+    # 보너스 제외 컬럼 업데이트
     cursor.execute("""
         UPDATE lotto_carryover_summary 
-        SET occurrence_total = occurrence_total + 1,
-            occurrence_with_bonus = occurrence_with_bonus + 1
+        SET occurrence_total = occurrence_total + 1
         WHERE match_count = %s
     """, (match_6,))
-    print(f"📊 {current_round}회차 이월수 통계 반영 완료 (이월수: {match_6}개)")
+    
+    # 보너스 포함 컬럼 업데이트
+    cursor.execute("""
+        UPDATE lotto_carryover_summary 
+        SET occurrence_with_bonus = occurrence_with_bonus + 1
+        WHERE match_count = %s
+    """, (match_7,))
 
-# ----------------------------------------------
+    print(f"📊 {current_round}회차 통계 반영: 제외({match_6}개), 포함({match_7}개) | 번호: {matched_nums_str}")
+
 
 def crawl_and_update():
     last_db_round = get_latest_round_in_db()
