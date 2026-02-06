@@ -38,10 +38,10 @@ def initialize_carryover_stats():
                 # 이번주 당첨번호 6개
                 curr_set_6 = {curr[f'tm{j}WnNo'] for j in range(1, 7)}
 
-                # 교집합 계산 (이월수)
                 match_6 = len(prev_set_6 & curr_set_6)
                 match_7 = len(prev_set_7 & curr_set_6)
-                matched_nums = ",".join(map(str, sorted(list(prev_set_6 & curr_set_6))))
+                # prev_set_7(보너스 포함)을 사용하여 교집합을 구해야 보너스 번호가 섞여 들어갑니다.
+                matched_nums = ",".join(map(str, sorted(list(prev_set_7 & curr_set_6))))
 
                 # 히스토리 리스트에 추가
                 history_data.append((curr['ltEpsd'], match_6, match_7, matched_nums))
