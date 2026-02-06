@@ -743,7 +743,7 @@ def format_lotto_numbers_result(row):
             
     return formatted
 
-    
+
 @app.route('/lotto/carryover/stats', methods=['GET'])
 def get_carryover_stats():
     """
@@ -812,11 +812,11 @@ def get_carryover_stats():
 
 @app.route('/lotto/carryover/analysis', methods=['GET'])
 def analyze_carryover_candidates():
-    """
-    [케이스 통합 분석]
-    Case 1: includeBonus=false (메인 6개만 분석)
-    Case 2: includeBonus=true  (7개 전체 분석)
-    Case 3: pick 파라미터에 보너스 번호가 포함되면 자동으로 시너지 분석
+"""
+    [케이스 통합 분석 + 이월 적중률 추가]
+    - total_carry_count: 역대 이월 성공 횟수 (분자)
+    - total_appearance_count: 역대 전체 당첨 횟수 (분모)
+    - carryover_rate: 이월 적중률 (%)
     """
     try:
         pick_param = request.args.get('pick')
@@ -825,22 +825,43 @@ def analyze_carryover_candidates():
 
         with pymysql.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cursor:
+                # 1. 지난주 당첨 번호 가져오기
                 cursor.execute("SELECT * FROM lotto_numbers ORDER BY ltEpsd DESC LIMIT 1")
                 latest = cursor.fetchone()
                 
-                # 후보군 결정 (Case 1 vs Case 2)
-                candidates = [latest[f'tm{i}WnNo'] for i in range(1, 7)]
+                last_week_main = [latest[f'tm{i}WnNo'] for i in range(1, 7)]
                 last_week_bonus = latest['bnsWnNo']
-                if include_bonus:
-                    candidates.append(last_week_bonus)
+                
+                # 후보군 설정 (Case 1 vs Case 2)
+                candidates = last_week_main + ([last_week_bonus] if include_bonus else [])
 
                 individual_analysis = []
                 for num in candidates:
-                    cursor.execute("SELECT COUNT(*) as cnt FROM lotto_carryover_history WHERE FIND_IN_SET(%s, matched_numbers)", (str(num),))
+                    # A. 역대 이월 성공 횟수 (2주 연속 등장한 횟수)
+                    cursor.execute("""
+                        SELECT COUNT(*) as cnt 
+                        FROM lotto_carryover_history 
+                        WHERE FIND_IN_SET(%s, matched_numbers)
+                    """, (str(num),))
                     carry_cnt = cursor.fetchone()['cnt']
+                    
+                    # B. 역대 전체 당첨 횟수 (메인 6개 + 보너스 1개 모두 포함)
+                    # 이 번호가 지난주 당첨 번호(7개) 후보군에 올랐던 모든 기회를 카운트합니다.
+                    cursor.execute("""
+                        SELECT COUNT(*) as total_cnt 
+                        FROM lotto_numbers 
+                        WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo)
+                    """, (num,))
+                    total_app_cnt = cursor.fetchone()['total_cnt']
+                    
+                    # C. 이월 적중률 계산
+                    hit_rate = round((carry_cnt / total_app_cnt) * 100, 2) if total_app_cnt > 0 else 0
+
                     individual_analysis.append({
                         "number": num, 
-                        "total_carry_count": carry_cnt,
+                        "total_carry_count": carry_cnt,      # 성공 횟수
+                        "total_appearance_count": total_app_cnt, # 전체 기회
+                        "carryover_rate": f"{hit_rate}%",    # 적중률
                         "is_bonus_last_week": (num == last_week_bonus)
                     })
 
@@ -863,7 +884,7 @@ def analyze_carryover_candidates():
                 return jsonify({
                     "case": 2 if include_bonus else 1,
                     "last_round": latest['ltEpsd'],
-                    "candidates_analysis": sorted(individual_analysis, key=lambda x: x['total_carry_count'], reverse=True),
+                    "candidates_analysis": sorted(individual_analysis, key=lambda x: float(x['carryover_rate'].replace('%','')), reverse=True),
                     "synergy": chemistry
                 })
     except Exception as e:
