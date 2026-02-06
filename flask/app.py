@@ -812,7 +812,7 @@ def get_carryover_stats():
 
 @app.route('/lotto/carryover/analysis', methods=['GET'])
 def analyze_carryover_candidates():
-"""
+    """
     [케이스 통합 분석 + 이월 적중률 추가]
     - total_carry_count: 역대 이월 성공 횟수 (분자)
     - total_appearance_count: 역대 전체 당첨 횟수 (분모)
