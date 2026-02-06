@@ -57,18 +57,43 @@ def get_latest_lotto():
         print(f"Error in /lotto/latest: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/lotto/round/<int:round_number>', methods=['GET'])
 def get_lotto_by_round(round_number):
     try:
         with pymysql.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cursor:
-                cursor.execute("SELECT * FROM lotto WHERE round = %s", (round_number,))
-                result = cursor.fetchone()
-                if result:
-                    return jsonify(format_lotto_result(result))
+                # 1. lotto_numbers 테이블에서 해당 회차 데이터만 정확히 조회
+                sql = """
+                    SELECT 
+                        ltEpsd, ltRflYmd, 
+                        tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo,
+                        rnk1WnAmt, rnk1WnNope, rnk2WnAmt, wholEpsdSumNtslAmt
+                    FROM lotto_numbers 
+                    WHERE ltEpsd = %s
+                """
+                cursor.execute(sql, (round_number,))
+                row = cursor.fetchone()
+                
+                if row:
+                    # 2. 요청하신 JSON 형식으로 직접 매핑
+                    result = {
+                        "round": row["ltEpsd"],
+                        "draw_date": row["ltRflYmd"].isoformat() if isinstance(row["ltRflYmd"], (date, datetime)) else str(row["ltRflYmd"]),
+                        "numbers": [
+                            row["tm1WnNo"], row["tm2WnNo"], row["tm3WnNo"], 
+                            row["tm4WnNo"], row["tm5WnNo"], row["tm6WnNo"]
+                        ],
+                        "bonus": row["bnsWnNo"],
+                        "first_prize_amt": int(row["rnk1WnAmt"]),
+                        "first_winner_count": int(row["rnk1WnNope"]),
+                        "second_prize_amt": int(row["rnk2WnAmt"]),
+                        "total_sales": int(row["wholEpsdSumNtslAmt"])
+                    }
+                    return jsonify(result)
+                
                 return jsonify({"error": "Round not found"}), 404
     except Exception as e:
+        app.logger.error(f"Error in /lotto/round/{round_number}: {e}")
         return jsonify({"error": str(e)}), 500
 
 
