@@ -719,6 +719,96 @@ def format_lotto_numbers_result(row):
     return formatted
 
 
+@app.route('/lotto/carryover/stats', methods=['GET'])
+def get_carryover_stats():
+    """이월수 개수별 이론 vs 실제 확률 및 히스토리"""
+    try:
+        count = request.args.get('count', default=1, type=int)
+        include_bonus = request.args.get('includeBonus', default='false').lower() == 'true'
+        
+        # 이론적 확률 데이터 (상수)
+        probs = {
+            False: {0: 40.06, 1: 42.41, 2: 14.94, 3: 2.40, 4: 0.18, 5: 0.01, 6: 0.00},
+            True:  {0: 27.83, 1: 42.22, 2: 21.01, 3: 7.01, 4: 1.52, 5: 0.15, 6: 0.00}
+        }
+
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                # 1. 실제 발생 빈도 합계 및 특정 개수 조회
+                col = "occurrence_with_bonus" if include_bonus else "occurrence_total"
+                cursor.execute(f"SELECT SUM({col}) as total FROM lotto_carryover_summary")
+                total_sum = cursor.fetchone()['total'] or 0
+                
+                cursor.execute(f"SELECT {col} as count, updated_at FROM lotto_carryover_summary WHERE match_count = %s", (count,))
+                target = cursor.fetchone()
+                
+                occ_count = target['count'] if target else 0
+                actual_prob = round((occ_count / total_sum) * 100, 2) if total_sum > 0 else 0
+
+                # 2. 최근 히스토리 10건
+                hist_col = "match_count_with_bonus" if include_bonus else "match_count"
+                cursor.execute(f"SELECT round, matched_numbers FROM lotto_carryover_history WHERE {hist_col} = %s ORDER BY round DESC LIMIT 10", (count,))
+                history = cursor.fetchall()
+
+                result = {
+                    "theoretical_prob": f"{probs[include_bonus].get(count, 0)}%",
+                    "actual_prob": f"{actual_prob}%",
+                    "history": history,
+                    "last_updated": target['updated_at'].isoformat() if target and target['updated_at'] else None
+                }
+                return app.response_class(json.dumps(result, ensure_ascii=False), mimetype='application/json')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route('/lotto/carryover/analysis', methods=['GET'])
+def analyze_carryover_candidates():
+    """지난주 번호별 이월 성향 및 선택 번호 간 궁합 분석"""
+    try:
+        # 유저가 선택해본 번호들 (예: ?pick=3,15)
+        pick_param = request.args.get('pick')
+        picks = [int(x.strip()) for x in pick_param.split(',')] if pick_param else []
+
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                # 1. 지난주 당첨 번호 가져오기
+                cursor.execute("SELECT * FROM lotto_numbers ORDER BY ltEpsd DESC LIMIT 1")
+                latest = cursor.fetchone()
+                last_week = [latest[f'tm{i}WnNo'] for i in range(1, 7)]
+                
+                # 2. 지난주 번호 각각의 '이월 파워' 분석
+                individual_analysis = []
+                for num in last_week:
+                    cursor.execute("SELECT COUNT(*) as cnt FROM lotto_carryover_history WHERE FIND_IN_SET(%s, matched_numbers)", (str(num),))
+                    carry_cnt = cursor.fetchone()['cnt']
+                    individual_analysis.append({"number": num, "total_carry_count": carry_cnt})
+                
+                # 성적순 정렬
+                individual_analysis = sorted(individual_analysis, key=lambda x: x['total_carry_count'], reverse=True)
+
+                # 3. 궁합(Chemistry) 분석: 선택된 번호들이 동시에 이월된 적이 있는가?
+                chemistry = None
+                if len(picks) >= 2:
+                    where_clause = " AND ".join([f"FIND_IN_SET('{p}', matched_numbers)" for p in picks])
+                    cursor.execute(f"SELECT round, matched_numbers FROM lotto_carryover_history WHERE {where_clause}")
+                    co_occur = cursor.fetchall()
+                    chemistry = {
+                        "pair": picks,
+                        "co_occurrence_count": len(co_occur),
+                        "common_history": co_occur,
+                        "evaluation": "🔥 찰떡궁합" if len(co_occur) >= 3 else "❄️ 생소한 조합"
+                    }
+
+                result = {
+                    "last_round": latest['ltEpsd'],
+                    "individual_power": individual_analysis,
+                    "synergy": chemistry
+                }
+                return app.response_class(json.dumps(result, ensure_ascii=False), mimetype='application/json')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/api/promotions', methods=['GET'])
 def get_promotions():
@@ -755,6 +845,7 @@ def get_promotions():
         # 에러 메시지를 확인하기 위해 로그 출력
         print(f"Error in /api/promotions: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 # ✅ 헬스 체크
 @app.route('/health', methods=['GET'])

@@ -2,7 +2,7 @@ import requests
 import pymysql
 import time
 
-# 1. DB 접속 정보
+# 1. DB 접속 정보 (기존 유지)
 DB_CONFIG = {
     'host': '127.0.0.1',
     'user': 'admin',
@@ -22,17 +22,58 @@ def get_latest_round_in_db():
     finally:
         conn.close()
 
+# --- [추가된 함수: 이월수 통계 업데이트] ---
+def update_carryover_statistics(cursor, current_round):
+    """방금 저장된 회차와 이전 회차를 비교하여 통계 테이블 갱신"""
+    # 1. 이번 회차와 이전 회차 번호 가져오기
+    cursor.execute("""
+        SELECT ltEpsd, tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo 
+        FROM lotto_numbers 
+        WHERE ltEpsd IN (%s, %s) 
+        ORDER BY ltEpsd ASC
+    """, (current_round - 1, current_round))
+    
+    rows = cursor.fetchall()
+    if len(rows) < 2:
+        return # 이전 회차 데이터가 없으면 계산 불가
+
+    prev, curr = rows[0], rows[1]
+    
+    # 2. 이월수 계산 (Set 집합 연산 사용)
+    prev_set_6 = {prev[f'tm{j}WnNo'] for j in range(1, 7)}
+    prev_set_7 = prev_set_6 | {prev['bnsWnNo']} # 보너스 포함
+    curr_set_6 = {curr[f'tm{j}WnNo'] for j in range(1, 7)}
+
+    match_6 = len(prev_set_6 & curr_set_6)
+    match_7 = len(prev_set_7 & curr_set_6)
+    matched_nums = ",".join(map(str, sorted(list(prev_set_6 & curr_set_6))))
+
+    # 3. History 테이블 저장
+    cursor.execute("""
+        INSERT INTO lotto_carryover_history (round, match_count, match_count_with_bonus, matched_numbers)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE match_count=%s, match_count_with_bonus=%s, matched_numbers=%s
+    """, (current_round, match_6, match_7, matched_nums, match_6, match_7, matched_nums))
+
+    # 4. Summary 테이블 누적 업데이트
+    # (주의: 만약 스크립트를 실수로 중복 실행할 경우를 대비해 
+    # 실제 앱 운영시에는 '이미 처리된 회차인지' 체크하는 로직이 있으면 더 안전합니다.)
+    cursor.execute("""
+        UPDATE lotto_carryover_summary 
+        SET occurrence_total = occurrence_total + 1,
+            occurrence_with_bonus = occurrence_with_bonus + 1
+        WHERE match_count = %s
+    """, (match_6,))
+    print(f"📊 {current_round}회차 이월수 통계 반영 완료 (이월수: {match_6}개)")
+
+# ----------------------------------------------
+
 def crawl_and_update():
     last_db_round = get_latest_round_in_db()
     print(f"현재 DB 최신 회차: {last_db_round}")
 
-    # 2. 제공해주신 헤더 정보를 바탕으로 요청 설정
     url = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do"
-    params = {
-        "srchLtEpsd": "all",
-        "_": str(int(time.time() * 1000)) # 타임스탬프
-    }
-    
+    params = {"srchLtEpsd": "all", "_": str(int(time.time() * 1000))}
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
         'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -42,11 +83,7 @@ def crawl_and_update():
     }
 
     try:
-        print("동행복권 API 데이터 요청 중...")
         response = requests.get(url, params=params, headers=headers)
-        
-        # 3. JSON 데이터 파싱
-        # 응답이 JSON이므로 BeautifulSoup 대신 response.json() 사용
         res_json = response.json()
         lotto_list = res_json.get("data", {}).get("list", [])
 
@@ -81,11 +118,13 @@ def crawl_and_update():
             )
             """
 
-            for item in lotto_list:
+            # 최신 회차가 위로 오므로 뒤집어서 과거 순으로 처리해야 
+            # 이전 회차와 비교하며 통계를 쌓기에 좋습니다.
+            for item in reversed(lotto_list): 
                 epsd = item["ltEpsd"]
                 
-                # DB에 없는 새로운 회차만 저장
                 if epsd > last_db_round:
+                    # [A] 기본 당첨 번호 저장
                     raw_date = str(item["ltRflYmd"])
                     formatted_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
                     
@@ -103,11 +142,18 @@ def crawl_and_update():
                     item["excelRnk"]
                     )
                     cursor.execute(sql, params_tuple)
+
+                    # (기존 params_tuple 및 execute 로직 유지)
+                    # cursor.execute(sql, params_tuple)
+                    
+                    # [B] 이월수 통계 자동 업데이트 호출!
+                    update_carryover_statistics(cursor, epsd)
+                    
                     new_count += 1
-                    print(f"✅ {epsd}회차 저장 성공")
+                    print(f"✅ {epsd}회차 저장 및 통계 업데이트 성공")
 
             conn.commit()
-            print(f"🚀 업데이트 완료! 총 {new_count}개의 새로운 회차가 추가되었습니다.")
+            print(f"🚀 전체 업데이트 완료! 총 {new_count}개의 데이터가 처리되었습니다.")
 
     except Exception as e:
         print(f"❗ 오류 발생: {e}")
