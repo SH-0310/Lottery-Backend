@@ -743,13 +743,14 @@ def format_lotto_numbers_result(row):
             
     return formatted
 
+    
 @app.route('/lotto/carryover/stats', methods=['GET'])
 def get_carryover_stats():
     """
-    [케이스 통합 통계]
-    Case 1: includeBonus=false, mustIncludeBonus=false
-    Case 2: includeBonus=true,  mustIncludeBonus=false
-    Case 3: includeBonus=true,  mustIncludeBonus=true
+    [케이스 통합 통계 - 엄격한 필터 적용]
+    Case 1: 보너스 번호가 이번 주 당첨 번호에 포함된 경우를 완전히 배제 (순수 메인 이월)
+    Case 2: 보너스 번호 포함 여부 상관없이 개수만 체크
+    Case 3: 반드시 보너스 번호가 포함된 경우만 체크
     """
     try:
         count = request.args.get('count', default=1, type=int)
@@ -758,19 +759,20 @@ def get_carryover_stats():
 
         with pymysql.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cursor:
-                # 1. 컬럼 및 기본 필터 결정
-                # Case 1은 match_count, Case 2/3은 match_count_with_bonus 사용
+                # 1. 컬럼 결정
                 target_col = "match_count_with_bonus" if include_bonus else "match_count"
-                sum_col = "occurrence_with_bonus" if include_bonus else "occurrence_total"
 
-                # 2. Case 3 (보너스 승격 필수) 필터링 쿼리 구성
-                # 히스토리 조회를 위해 이전 회차의 보너스 번호를 체크해야 함
+                # 2. CASE별 엄격한 조건절(WHERE) 구성
                 where_clause = f"WHERE h.{target_col} = %s"
-                if must_include_bonus:
-                    # JOIN을 통해 직전 회차(round-1)의 보너스 번호가 matched_numbers에 있는지 확인
+                
+                if must_include_bonus: # [CASE 3] 보너스 번호 포함 필수
                     where_clause += " AND FIND_IN_SET(n.bnsWnNo, h.matched_numbers) > 0"
+                
+                elif not include_bonus: # [CASE 1] 보너스 번호가 포함된 사례를 '절대' 내보내지 않음
+                    # 메인끼리 count개가 겹쳤더라도, 만약 보너스 번호까지 겹쳤다면 리스트에서 탈락시킵니다.
+                    where_clause += " AND NOT (FIND_IN_SET(n.bnsWnNo, h.matched_numbers) > 0)"
 
-                # 3. 히스토리 조회 (JOIN 쿼리)
+                # 3. 히스토리 조회 (최근 10건)
                 sql_history = f"""
                     SELECT h.round, h.matched_numbers 
                     FROM lotto_carryover_history h
@@ -781,30 +783,28 @@ def get_carryover_stats():
                 cursor.execute(sql_history, (count,))
                 history = cursor.fetchall()
 
-                # 4. 확률 계산
-                # Case 3는 전체 중 '보너스가 포함된' 특수 확률이므로 실시간 카운트
-                if must_include_bonus:
-                    cursor.execute(f"SELECT COUNT(*) as total FROM lotto_carryover_history")
-                    total_all = cursor.fetchone()['total']
+                # 4. 확률 계산 (실시간 카운트 방식)
+                # CASE 1과 CASE 3는 조건이 까다로우므로 전체 로그를 기준으로 실시간 계산하여 정확도를 높입니다.
+                cursor.execute("SELECT COUNT(*) as total FROM lotto_carryover_history")
+                total_all = cursor.fetchone()['total']
+
+                if total_all > 0:
                     cursor.execute(f"""
-                        SELECT COUNT(*) as target_cnt FROM lotto_carryover_history h
+                        SELECT COUNT(*) as target_cnt 
+                        FROM lotto_carryover_history h
                         JOIN lotto_numbers n ON n.ltEpsd = h.round - 1
-                        WHERE h.{target_col} = %s AND FIND_IN_SET(n.bnsWnNo, h.matched_numbers) > 0
+                        {where_clause}
                     """, (count,))
                     occ_count = cursor.fetchone()['target_cnt']
+                    actual_prob = round((occ_count / total_all) * 100, 2)
                 else:
-                    cursor.execute(f"SELECT SUM({sum_col}) as total FROM lotto_carryover_summary")
-                    total_all = cursor.fetchone()['total'] or 0
-                    cursor.execute(f"SELECT {sum_col} FROM lotto_carryover_summary WHERE match_count = %s", (count,))
-                    occ_res = cursor.fetchone()
-                    occ_count = occ_res[sum_col] if occ_res else 0
-
-                actual_prob = round((occ_count / total_all) * 100, 2) if total_all > 0 else 0
+                    actual_prob = 0
 
                 return jsonify({
                     "case": 3 if must_include_bonus else (2 if include_bonus else 1),
                     "actual_prob": f"{actual_prob}%",
-                    "history": history
+                    "history": history,
+                    "description": "보너스 번호 이월 사례가 제외된 순수 메인 이월 통계입니다." if not include_bonus else ""
                 })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
