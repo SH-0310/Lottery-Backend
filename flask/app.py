@@ -3,9 +3,33 @@ import pymysql
 import json
 from datetime import datetime, date
 from decimal import Decimal
+from werkzeug.middleware.proxy_fix import ProxyFix
+import logging
 
 app = Flask(__name__)
 
+# 1. 로드밸런서의 X-Forwarded-For 헤더를 신뢰하도록 설정
+# x_for=1은 앞에 로드밸런서가 1대 있다는 뜻입니다.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
+
+# 2. 로그 포맷 설정: server.log에 실제 IP가 찍히도록 합니다.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(remote_addr)s - - [%(asctime)s] "%(method)s %(url)s" %(status)s',
+)
+
+@app.before_request
+def log_request_info():
+    # 요청이 올 때마다 실제 IP를 포함해 로그를 남깁니다.
+    app.logger.info(
+        '', 
+        extra={
+            'remote_addr': request.remote_addr,
+            'method': request.method,
+            'url': request.path,
+            'status': 'PROCESSING'
+        }
+    )
 # DB 접속 정보
 DB_CONFIG = {
     'host': '127.0.0.1',
