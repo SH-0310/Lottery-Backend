@@ -810,100 +810,100 @@ def get_carryover_stats():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/lotto/carryover/analysis', methods=['GET'])
-def analyze_carryover_candidates():
-    """
-    [케이스 통합 분석 + 이월 적중률 추가]
-    - total_carry_count: 역대 이월 성공 횟수 (분자)
-    - total_appearance_count: 역대 전체 당첨 횟수 (분모)
-    - carryover_rate: 이월 적중률 (%)
-    """
-    try:
-        pick_param = request.args.get('pick')
-        include_bonus = request.args.get('includeBonus', default='true').lower() == 'true'
-        picks = [int(x.strip()) for x in pick_param.split(',')] if pick_param else []
+# @app.route('/lotto/carryover/analysis', methods=['GET'])
+# def analyze_carryover_candidates():
+#     """
+#     [케이스 통합 분석 + 이월 적중률 추가]
+#     - total_carry_count: 역대 이월 성공 횟수 (분자)
+#     - total_appearance_count: 역대 전체 당첨 횟수 (분모)
+#     - carryover_rate: 이월 적중률 (%)
+#     """
+#     try:
+#         pick_param = request.args.get('pick')
+#         include_bonus = request.args.get('includeBonus', default='true').lower() == 'true'
+#         picks = [int(x.strip()) for x in pick_param.split(',')] if pick_param else []
 
-        with pymysql.connect(**DB_CONFIG) as conn:
-            with conn.cursor() as cursor:
-                # 1. 지난주 당첨 번호 가져오기
-                cursor.execute("SELECT * FROM lotto_numbers ORDER BY ltEpsd DESC LIMIT 1")
-                latest = cursor.fetchone()
+#         with pymysql.connect(**DB_CONFIG) as conn:
+#             with conn.cursor() as cursor:
+#                 # 1. 지난주 당첨 번호 가져오기
+#                 cursor.execute("SELECT * FROM lotto_numbers ORDER BY ltEpsd DESC LIMIT 1")
+#                 latest = cursor.fetchone()
                 
-                last_week_main = [latest[f'tm{i}WnNo'] for i in range(1, 7)]
-                last_week_bonus = latest['bnsWnNo']
+#                 last_week_main = [latest[f'tm{i}WnNo'] for i in range(1, 7)]
+#                 last_week_bonus = latest['bnsWnNo']
                 
-                # 후보군 설정 (Case 1 vs Case 2)
-                candidates = last_week_main + ([last_week_bonus] if include_bonus else [])
+#                 # 후보군 설정 (Case 1 vs Case 2)
+#                 candidates = last_week_main + ([last_week_bonus] if include_bonus else [])
 
-                individual_analysis = []
-                for num in candidates:
-                    # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
-                    # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
-                    if not include_bonus:
-                        carry_query = """
-                            SELECT COUNT(*) as cnt 
-                            FROM lotto_carryover_history 
-                            WHERE FIND_IN_SET(%s, matched_numbers) 
-                            AND NOT FIND_IN_SET(%s, bonus_matched_numbers)
-                        """
-                        cursor.execute(carry_query, (str(num), str(num))) # 인자 2개
-                    else:
-                        carry_query = """
-                            SELECT COUNT(*) as cnt 
-                            FROM lotto_carryover_history 
-                            WHERE FIND_IN_SET(%s, matched_numbers)
-                        """
-                        cursor.execute(carry_query, (str(num),)) # 인자 1개
+#                 individual_analysis = []
+#                 for num in candidates:
+#                     # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
+#                     # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
+#                     if not include_bonus:
+#                         carry_query = """
+#                             SELECT COUNT(*) as cnt 
+#                             FROM lotto_carryover_history 
+#                             WHERE FIND_IN_SET(%s, matched_numbers) 
+#                             AND NOT FIND_IN_SET(%s, bonus_matched_numbers)
+#                         """
+#                         cursor.execute(carry_query, (str(num), str(num))) # 인자 2개
+#                     else:
+#                         carry_query = """
+#                             SELECT COUNT(*) as cnt 
+#                             FROM lotto_carryover_history 
+#                             WHERE FIND_IN_SET(%s, matched_numbers)
+#                         """
+#                         cursor.execute(carry_query, (str(num),)) # 인자 1개
 
-                    # 위에서 이미 실행했으므로 바로 fetchone()만 하면 됩니다.
-                    carry_cnt = cursor.fetchone()['cnt']
+#                     # 위에서 이미 실행했으므로 바로 fetchone()만 하면 됩니다.
+#                     carry_cnt = cursor.fetchone()['cnt']
                     
-                    # --- B. 역대 전체 당첨 횟수 (분모) 결정 ---
-                    if not include_bonus:
-                        # 옵션 1: 메인 번호로만 나왔던 기회를 카운트 (사용자님의 핵심 로직!)
-                        app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo)"
-                    else:
-                        # 옵션 2, 3: 메인+보너스 통합 기회를 카운트
-                        app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo)"
+#                     # --- B. 역대 전체 당첨 횟수 (분모) 결정 ---
+#                     if not include_bonus:
+#                         # 옵션 1: 메인 번호로만 나왔던 기회를 카운트 (사용자님의 핵심 로직!)
+#                         app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo)"
+#                     else:
+#                         # 옵션 2, 3: 메인+보너스 통합 기회를 카운트
+#                         app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo)"
 
-                    cursor.execute(app_query, (num,))
-                    total_app_cnt = cursor.fetchone()['total_cnt']
+#                     cursor.execute(app_query, (num,))
+#                     total_app_cnt = cursor.fetchone()['total_cnt']
                     
-                    # --- C. 이월 적중률 계산 ---
-                    hit_rate = round((carry_cnt / total_app_cnt) * 100, 2) if total_app_cnt > 0 else 0
+#                     # --- C. 이월 적중률 계산 ---
+#                     hit_rate = round((carry_cnt / total_app_cnt) * 100, 2) if total_app_cnt > 0 else 0
 
-                    individual_analysis.append({
-                        "number": num, 
-                        "total_carry_count": carry_cnt,
-                        "total_appearance_count": total_app_cnt,
-                        "carryover_rate": f"{hit_rate}%",
-                        "is_bonus_last_week": (num == last_week_bonus)
-                    })
+#                     individual_analysis.append({
+#                         "number": num, 
+#                         "total_carry_count": carry_cnt,
+#                         "total_appearance_count": total_app_cnt,
+#                         "carryover_rate": f"{hit_rate}%",
+#                         "is_bonus_last_week": (num == last_week_bonus)
+#                     })
 
-                # 시너지 분석 (Case 3 필터링 포함)
-                chemistry = None
-                if picks:
-                    # 선택한 번호 중 보너스 번호가 있는지 확인
-                    has_bonus_pick = last_week_bonus in picks
-                    where_clause = " AND ".join([f"FIND_IN_SET('{p}', matched_numbers)" for p in picks])
-                    cursor.execute(f"SELECT round, matched_numbers FROM lotto_carryover_history WHERE {where_clause}")
-                    co_occur = cursor.fetchall()
+#                 # 시너지 분석 (Case 3 필터링 포함)
+#                 chemistry = None
+#                 if picks:
+#                     # 선택한 번호 중 보너스 번호가 있는지 확인
+#                     has_bonus_pick = last_week_bonus in picks
+#                     where_clause = " AND ".join([f"FIND_IN_SET('{p}', matched_numbers)" for p in picks])
+#                     cursor.execute(f"SELECT round, matched_numbers FROM lotto_carryover_history WHERE {where_clause}")
+#                     co_occur = cursor.fetchall()
 
-                    chemistry = {
-                        "pair": picks,
-                        "contains_bonus_carry": has_bonus_pick,
-                        "co_occurrence_count": len(co_occur),
-                        "evaluation": "🔥 보너스 승격 포함 최강 조합" if has_bonus_pick and len(co_occur) >= 2 else "✅ 일반 이월 조합"
-                    }
+#                     chemistry = {
+#                         "pair": picks,
+#                         "contains_bonus_carry": has_bonus_pick,
+#                         "co_occurrence_count": len(co_occur),
+#                         "evaluation": "🔥 보너스 승격 포함 최강 조합" if has_bonus_pick and len(co_occur) >= 2 else "✅ 일반 이월 조합"
+#                     }
 
-                return jsonify({
-                    "case": 2 if include_bonus else 1,
-                    "last_round": latest['ltEpsd'],
-                    "candidates_analysis": sorted(individual_analysis, key=lambda x: float(x['carryover_rate'].replace('%','')), reverse=True),
-                    "synergy": chemistry
-                })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+#                 return jsonify({
+#                     "case": 2 if include_bonus else 1,
+#                     "last_round": latest['ltEpsd'],
+#                     "candidates_analysis": sorted(individual_analysis, key=lambda x: float(x['carryover_rate'].replace('%','')), reverse=True),
+#                     "synergy": chemistry
+#                 })
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
 
 @app.route('/lotto/carryover/list-all', methods=['GET'])
 def get_all_combo_analysis():
