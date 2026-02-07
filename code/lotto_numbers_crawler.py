@@ -1,6 +1,8 @@
 import requests
 import pymysql
 import time
+import subprocess
+import os
 
 # 1. DB 접속 정보 (기존 유지)
 DB_CONFIG = {
@@ -170,6 +172,21 @@ def crawl_and_update():
             conn.commit()
             print(f"🚀 전체 업데이트 완료! 총 {new_count}개의 데이터가 처리되었습니다.")
 
+            # 신규 회차가 추가되었을 때만 분석 스크립트 실행
+            if new_count > 0:
+                print("📈 신규 데이터 감지: 이월 조합 적중률 재분석을 시작합니다...")
+                
+                # 같은 폴더에 있는 파일을 실행하도록 경로 지정
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                script_path = os.path.join(base_path, "carryover_init.py")
+                
+                # subprocess 실행 (들여쓰기 주의!)
+                result = subprocess.run(["python3", script_path], capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    print("✨ 모든 조합 분석 및 테이블 갱신이 성공적으로 끝났습니다.")
+                else:
+                    print(f"⚠️ 분석 스크립트 실행 중 오류 발생: {result.stderr}")
     except Exception as e:
         print(f"❗ 오류 발생: {e}")
     finally:

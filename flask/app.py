@@ -905,6 +905,59 @@ def analyze_carryover_candidates():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/lotto/carryover/list-all', methods=['GET'])
+def get_all_combo_analysis():
+    """
+    [분석 테이블 전체 데이터 출력]
+    - history_rounds: 최대 5개까지만 포함
+    - 정렬: 최신 회차 -> 적중률 높은 순
+    """
+    try:
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                # 1. 전체 데이터 조회 (최신 회차부터, 적중률 높은 순으로)
+                sql = """
+                    SELECT 
+                        id, target_round, combo_count, include_bonus, 
+                        numbers_combo, total_occur, total_appear, 
+                        hit_rate, history_rounds, created_at
+                    FROM lotto_carryover_combo_analysis
+                    ORDER BY target_round DESC, hit_rate DESC
+                """
+                cursor.execute(sql)
+                rows = cursor.fetchall()
+
+                full_list = []
+                for row in rows:
+                    # 2. history_rounds 가공 (쉼표 분리 -> 5개 제한)
+                    raw_history = row['history_rounds'].split(',') if row['history_rounds'] else []
+                    # 빈 문자열('')이 들어있는 경우 필터링 및 최대 5개 슬라이싱
+                    clean_history = [int(r) for r in raw_history if r.strip()][:5]
+
+                    full_list.append({
+                        "id": row['id'],
+                        "target_round": row['target_round'],
+                        "combo_count": row['combo_count'],
+                        "include_bonus": bool(row['include_bonus']),
+                        "numbers": [int(n) for n in row['numbers_combo'].split(',')],
+                        "total_occur": row['total_occur'],
+                        "total_appear": row['total_appear'],
+                        "hit_rate": f"{row['hit_rate']}%",
+                        "history_sample": clean_history, # 최대 5개
+                        "history_count": len(raw_history), # 전체 몇 번이었는지 참고용
+                        "created_at": row['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                    })
+
+                return jsonify({
+                    "status": "success",
+                    "total_count": len(full_list),
+                    "data": full_list
+                })
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route('/api/promotions', methods=['GET'])
 def get_promotions():
     try:
