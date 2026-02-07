@@ -838,24 +838,24 @@ def analyze_carryover_candidates():
                 individual_analysis = []
                 for num in candidates:
                     # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
+                    # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
                     if not include_bonus:
-                        # 순수 메인 -> 메인 이월만 카운트 (history 테이블에 is_bonus_carry 컬럼이 있다고 가정 시)
-                        # 만약 컬럼이 없다면 FIND_IN_SET만 써도 무방하지만, 더 엄격하게 하려면 필터가 필요합니다.
                         carry_query = """
                             SELECT COUNT(*) as cnt 
                             FROM lotto_carryover_history 
                             WHERE FIND_IN_SET(%s, matched_numbers) 
-                            AND is_bonus_carry = 0
+                            AND NOT FIND_IN_SET(%s, bonus_matched_numbers)
                         """
+                        cursor.execute(carry_query, (str(num), str(num))) # 인자 2개
                     else:
-                        # 메인 -> 메인 + 보너스 -> 메인 모두 카운트
                         carry_query = """
                             SELECT COUNT(*) as cnt 
                             FROM lotto_carryover_history 
                             WHERE FIND_IN_SET(%s, matched_numbers)
                         """
-                    
-                    cursor.execute(carry_query, (str(num),))
+                        cursor.execute(carry_query, (str(num),)) # 인자 1개
+
+                    # 위에서 이미 실행했으므로 바로 fetchone()만 하면 됩니다.
                     carry_cnt = cursor.fetchone()['cnt']
                     
                     # --- B. 역대 전체 당첨 횟수 (분모) 결정 ---
