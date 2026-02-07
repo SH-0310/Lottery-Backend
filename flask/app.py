@@ -837,31 +837,46 @@ def analyze_carryover_candidates():
 
                 individual_analysis = []
                 for num in candidates:
-                    # A. 역대 이월 성공 횟수 (2주 연속 등장한 횟수)
-                    cursor.execute("""
-                        SELECT COUNT(*) as cnt 
-                        FROM lotto_carryover_history 
-                        WHERE FIND_IN_SET(%s, matched_numbers)
-                    """, (str(num),))
+                    # --- A. 역대 이월 성공 횟수 (분자) 결정 ---
+                    if not include_bonus:
+                        # 순수 메인 -> 메인 이월만 카운트 (history 테이블에 is_bonus_carry 컬럼이 있다고 가정 시)
+                        # 만약 컬럼이 없다면 FIND_IN_SET만 써도 무방하지만, 더 엄격하게 하려면 필터가 필요합니다.
+                        carry_query = """
+                            SELECT COUNT(*) as cnt 
+                            FROM lotto_carryover_history 
+                            WHERE FIND_IN_SET(%s, matched_numbers) 
+                            AND is_bonus_carry = 0
+                        """
+                    else:
+                        # 메인 -> 메인 + 보너스 -> 메인 모두 카운트
+                        carry_query = """
+                            SELECT COUNT(*) as cnt 
+                            FROM lotto_carryover_history 
+                            WHERE FIND_IN_SET(%s, matched_numbers)
+                        """
+                    
+                    cursor.execute(carry_query, (str(num),))
                     carry_cnt = cursor.fetchone()['cnt']
                     
-                    # B. 역대 전체 당첨 횟수 (메인 6개 + 보너스 1개 모두 포함)
-                    # 이 번호가 지난주 당첨 번호(7개) 후보군에 올랐던 모든 기회를 카운트합니다.
-                    cursor.execute("""
-                        SELECT COUNT(*) as total_cnt 
-                        FROM lotto_numbers 
-                        WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo)
-                    """, (num,))
+                    # --- B. 역대 전체 당첨 횟수 (분모) 결정 ---
+                    if not include_bonus:
+                        # 옵션 1: 메인 번호로만 나왔던 기회를 카운트 (사용자님의 핵심 로직!)
+                        app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo)"
+                    else:
+                        # 옵션 2, 3: 메인+보너스 통합 기회를 카운트
+                        app_query = "SELECT COUNT(*) as total_cnt FROM lotto_numbers WHERE %s IN (tm1WnNo, tm2WnNo, tm3WnNo, tm4WnNo, tm5WnNo, tm6WnNo, bnsWnNo)"
+
+                    cursor.execute(app_query, (num,))
                     total_app_cnt = cursor.fetchone()['total_cnt']
                     
-                    # C. 이월 적중률 계산
+                    # --- C. 이월 적중률 계산 ---
                     hit_rate = round((carry_cnt / total_app_cnt) * 100, 2) if total_app_cnt > 0 else 0
 
                     individual_analysis.append({
                         "number": num, 
-                        "total_carry_count": carry_cnt,      # 성공 횟수
-                        "total_appearance_count": total_app_cnt, # 전체 기회
-                        "carryover_rate": f"{hit_rate}%",    # 적중률
+                        "total_carry_count": carry_cnt,
+                        "total_appearance_count": total_app_cnt,
+                        "carryover_rate": f"{hit_rate}%",
                         "is_bonus_last_week": (num == last_week_bonus)
                     })
 
